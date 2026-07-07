@@ -9,8 +9,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt install -y libgtk-3-dev libcurl4-openssl-dev libcjson-dev libsqlite3-dev
+        run: sudo apt-get update && sudo apt install -y libgtk-3-dev
 
       - name: Build
-        run: gcc -o threat-intel main.c api.c db.c threadpool.c $(pkg-config --cflags --libs gtk+-3.0) -lcurl -lcjson -lsqlite3 -lpthread
- 
+        run: gcc -o siem main.c log.c $(pkg-config --cflags --libs gtk+-3.0) -Wall

@@ -13,7 +13,7 @@ COPY . .
 
 RUN gcc main.c log.c -o siem \
     $(pkg-config --cflags --libs gtk+-3.0) \
-    -Wall -Wextra
+    -Wall
 
 ENV GDK_BACKEND=wayland
 

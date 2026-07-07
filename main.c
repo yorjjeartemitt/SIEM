@@ -7,10 +7,12 @@ typedef struct{
 	int show_all;
 } AppWidgets;
 static void set_dark(GtkMenuItem *item,gpointer data){
+	(void)item;(void)data;
 	GtkSettings *settings=gtk_settings_get_default();
 	g_object_set(settings,"gtk-application-prefer-dark-theme",TRUE,NULL);
 }
 static void set_white(GtkMenuItem *item,gpointer data){
+	(void)item;(void)data;
 	GtkSettings *settings=gtk_settings_get_default();
 	g_object_set(settings,"gtk-application-prefer-dark-theme",FALSE,NULL);
 }
