@@ -1,0 +1,20 @@
+2026-07-06 09:14:23 INFO     [auth] User 'admin' logged in from 192.168.1.15
+2026-07-06 09:14:24 INFO     [db] Connection pool initialized (10 connections)
+2026-07-06 09:14:31 WARNING  [api] Slow response: GET /api/users (842 ms)
+2026-07-06 09:14:35 INFO     [cache] Cache miss for key: user:1042
+2026-07-06 09:14:36 INFO     [cache] Cache updated for key: user:1042
+2026-07-06 09:14:42 ERROR    [db] Query timeout after 5000 ms
+2026-07-06 09:14:43 INFO     [db] Reconnecting to database...
+2026-07-06 09:14:44 INFO     [db] Database connection restored
+2026-07-06 09:15:01 INFO     [scheduler] Daily cleanup task started
+2026-07-06 09:15:04 INFO     [scheduler] Removed 248 temporary files
+2026-07-06 09:15:07 WARNING  [disk] Disk usage reached 81%
+2026-07-06 09:15:10 INFO     [backup] Backup started
+2026-07-06 09:15:42 INFO     [backup] Backup completed successfully (184 MB)
+2026-07-06 09:16:03 ERROR    [auth] Failed login attempt for user 'root' from 203.0.113.42
+2026-07-06 09:16:10 INFO     [security] IP 203.0.113.42 temporarily blocked
+2026-07-06 09:16:22 INFO     [api] POST /api/orders -> 201 Created
+2026-07-06 09:16:25 INFO     [worker] Job #54821 completed in 1.38 s
+2026-07-06 09:16:33 WARNING  [worker] Job #54822 exceeded expected runtime
+2026-07-06 09:16:51 INFO     [worker] Job #54822 completed successfully
+2026-07-06 09:17:05 INFO     [system] Health check passed
