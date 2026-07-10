@@ -139,11 +139,9 @@ void check_alert(LogEntry *entry){
         entry->reason[0]=0;
         return;
     }
-    for (int i=0; i<3;i++){
-        if (strstr(entry->source,"ALPM-SCRIPTLET") && strncmp(entry->message,"==> ",4)==0){
-            memmove(entry->message,entry->message+4,strlen(entry->message)-4+1);
-        }
-    }   
+    if (strstr(entry->source,"ALPM-SCRIPTLET") && strncmp(entry->message,"==> ",4)==0){
+        memmove(entry->message,entry->message+4,strlen(entry->message)-4+1);
+    }
     for (int r=0; rules[r].pattern; r++){
         if (contains_word(lower_msg,rules[r].pattern)){
             int rank=severity_rank(rules[r].severity);
