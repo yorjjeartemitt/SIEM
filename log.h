@@ -8,6 +8,8 @@ typedef struct {
 	char level[16];
 	int is_alert;
 	char reason[64];
+	char severity[16];
+	char category[32];
 } LogEntry;
 
 typedef struct {

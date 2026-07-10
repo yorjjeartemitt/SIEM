@@ -26,31 +26,147 @@ void log_buffer_free(LogBuffer *buf){
     buf->capacity=0;
 }
 
-void check_alert(LogEntry *entry){
-    if (!strcmp(entry->level,"ERROR") || !strcmp(entry->level,"CRITICAL")){
-        entry->is_alert=1;
-        snprintf(entry->reason,sizeof(entry->reason),"level: %s",entry->level);
+typedef struct {
+    const char *pattern;
+    const char *severity;
+    const char *category;
+} AlertRule;
+static void format_timestamp(char *out,size_t out_size,const char *raw){
+    int year,mon,day,hours,min,sec;
+    if (sscanf(raw,"%d-%d-%dT%d:%d:%d",&year,&mon,&day,&hours,&min,&sec)==6){
+        snprintf(out,out_size,"%02d.%02d %02d:%02d",day,mon,hours,min);
         return;
     }
-    if (!strcmp(entry->level,"WARNING") || !strcmp(entry->level,"WARN")){
-        entry->is_alert=1;
-        snprintf(entry->reason,sizeof(entry->reason),"level: %s",entry->level);
+    char mon_str[4];
+    //for auth.log
+    if (sscanf(raw,"%3s %d %d:%d:%d",mon_str,&day,&hours,&min,&sec)==5){
+        static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        int m=0;
+        for (int i=0;i<12;i++) if (!strcmp(mon_str,months[i])){m=i+1;break;}
+        snprintf(out,out_size,"%02d.%02d %02d:%02d",day,m,hours,min);
         return;
     }
+    snprintf(out,out_size,"%s",raw);
+}
+static const AlertRule rules[]={
+    // CRITICAL
+    {"segfault","CRITICAL","system"},
+    {"kernel panic","CRITICAL","system"},
+    {"out of memory","CRITICAL","system"},
+    {"buffer overflow","CRITICAL","malware"},
+    {"root access","CRITICAL","auth"},
+    {"privilege escalation","CRITICAL","auth"},
 
+    // HIGH - auth / security
+    {"authentication failure","HIGH","auth"},
+    {"failed password","HIGH","auth"},
+    {"invalid user","HIGH","auth"},
+    {"unauthorized","HIGH","auth"},
+    {"permission denied","HIGH","auth"},
+    {"access denied","HIGH","auth"},
+    {"denied","HIGH","auth"},
+    {"refused","HIGH","network"},
+    {"connection reset","HIGH","network"},
+    {"port scan","HIGH","recon"},
+    {"brute force","HIGH","auth"},
+    {"sql injection","HIGH","malware"},
+    {"malware","HIGH","malware"},
+    {"exploit","HIGH","malware"},
+    {"backdoor","HIGH","malware"},
+    {"checksum mismatch","HIGH","integrity"},
+    {"signature invalid","HIGH","integrity"},
+    {"file modified","HIGH","integrity"},
+
+    // MEDIUM - generic errors
+    {"error","MEDIUM","system"},
+    {"failed","MEDIUM","system"},
+    {"failure","MEDIUM","system"},
+    {"timeout","MEDIUM","network"},
+    {"disconnected","MEDIUM","network"},
+    {"unreachable","MEDIUM","network"},
+    {"exception","MEDIUM","system"},
+    {"crash","MEDIUM","system"},
+    {"corrupt","MEDIUM","integrity"},
+    {"suspicious","MEDIUM","recon"},
+
+    // LOW - worth noting
+    {"warning","LOW","system"},
+    {"retry","LOW","network"},
+    {"deprecated","LOW","system"},
+    {"slow response","LOW","network"},
+    {"high latency","LOW","network"},
+
+    {NULL,NULL,NULL}
+};
+
+static int severity_rank(const char *sev){
+    if (!strcmp(sev,"CRITICAL")) return 4;
+    if (!strcmp(sev,"HIGH")) return 3;
+    if (!strcmp(sev,"MEDIUM")) return 2;
+    if (!strcmp(sev,"LOW")) return 1;
+    return 0;
+}
+static int contains_word(const char *haystack,const char *pattern){
+    size_t plen=strlen(pattern);
+    const char *p=haystack;
+    while ((p=strstr(p,pattern))!=NULL){
+        int ok_before=(p==haystack) || !isalnum((unsigned char)*(p-1));
+        int ok_after=!isalnum((unsigned char)*(p+plen));
+        if (ok_before && ok_after) return 1;
+        p+=plen;
+    }
+    return 0;
+}
+void check_alert(LogEntry *entry){
+    const char *best_severity="NONE";
+    const char *best_category="none";
+    const char *best_pattern=NULL;
+    int best_rank=0;
+
+    if (!strcmp(entry->level,"CRITICAL")){ best_severity="CRITICAL"; best_category="system"; best_pattern="level: CRITICAL"; best_rank=4; }
+    else if (!strcmp(entry->level,"ERROR")){ best_severity="HIGH"; best_category="system"; best_pattern="level: ERROR"; best_rank=3; }
+    else if (!strcmp(entry->level,"WARNING") || !strcmp(entry->level,"WARN")){ best_severity="MEDIUM"; best_category="system"; best_pattern="level: WARNING"; best_rank=2; }
     char lower_msg[256];
     int i;
     for (i=0;entry->message[i] && i<255;i++){
         lower_msg[i]=tolower((unsigned char)entry->message[i]);
     }
     lower_msg[i]=0;
-    if (strstr(lower_msg,"error")){entry->is_alert=1; strncpy(entry->reason,"keyword: error",sizeof(entry->reason)); return;}
-    if (strstr(lower_msg,"failed")){entry->is_alert=1; strncpy(entry->reason,"keyword: failed",sizeof(entry->reason)); return;}
-    if (strstr(lower_msg,"denied")){entry->is_alert=1; strncpy(entry->reason,"keyword: denied",sizeof(entry->reason)); return;}
-    if (strstr(lower_msg,"warning")){entry->is_alert=1; strncpy(entry->reason,"keyword: warning",sizeof(entry->reason)); return;}
+    if ((strstr(entry->source,"ALPM") || strstr(entry->source,"PACMAN") || strstr(entry->source,"ALPM-SCRIPTLET")) && (strstr(lower_msg,"removed") || strstr(lower_msg,"installed") || strstr(lower_msg,"upgraded"))){
+        entry->is_alert=0;
+        snprintf(entry->severity,sizeof(entry->severity),"NONE");
+        snprintf(entry->category,sizeof(entry->category),"none");
+        entry->reason[0]=0;
+        return;
+    }
+    for (int i=0; i<3;i++){
+        if (strstr(entry->source,"ALPM-SCRIPTLET") && strncmp(entry->message,"==> ",4)==0){
+            memmove(entry->message,entry->message+4,strlen(entry->message)-4+1);
+        }
+    }   
+    for (int r=0; rules[r].pattern; r++){
+        if (contains_word(lower_msg,rules[r].pattern)){
+            int rank=severity_rank(rules[r].severity);
+            if (rank>best_rank){
+                best_rank=rank;
+                best_severity=rules[r].severity;
+                best_category=rules[r].category;
+                best_pattern=rules[r].pattern;
+            }
+        }
+    }
 
-    entry->is_alert=0;
-    entry->reason[0]=0;
+    if (best_rank>0){
+        entry->is_alert=1;
+        snprintf(entry->severity,sizeof(entry->severity),"%s",best_severity);
+        snprintf(entry->category,sizeof(entry->category),"%s",best_category);
+        snprintf(entry->reason,sizeof(entry->reason),"%s",best_pattern);
+    }else{
+        entry->is_alert=0;
+        snprintf(entry->severity,sizeof(entry->severity),"NONE");
+        snprintf(entry->category,sizeof(entry->category),"none");
+        entry->reason[0]=0;
+    }
 }
 int parse_generic_log(const char *filepath,LogBuffer *buf){
     FILE *f=fopen(filepath,"r");
@@ -81,6 +197,10 @@ int parse_generic_log(const char *filepath,LogBuffer *buf){
         }else{
             strncpy(entry.message,line,sizeof(entry.message)-1);
         }
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
+
         check_alert(&entry);
         log_buffer_push(buf,entry);
 
@@ -118,6 +238,9 @@ int parse_pacman_log(const char *filepath,LogBuffer *buf){
         char *msg_start=p4+2;
         snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
         entry.message[strcspn(entry.message,"\n")]=0;
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
         check_alert(&entry);
         log_buffer_push(buf,entry);
     }
@@ -143,6 +266,9 @@ int parse_auth_log(const char *filepath,LogBuffer *buf){
         char *msg_start=space+1;
         snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
         entry.message[strcspn(entry.message,"\n")]=0;
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
         check_alert(&entry);
         log_buffer_push(buf,entry);
     }
@@ -172,6 +298,10 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
         entry.source[src_len]=0;
         snprintf(entry.message,sizeof(entry.message),"%s",space2+1);
         entry.message[strcspn(entry.message,"\n")]=0;
+
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
         check_alert(&entry);
         log_buffer_push(buf,entry);
         read_count++;
