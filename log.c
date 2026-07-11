@@ -38,12 +38,27 @@ static void format_timestamp(char *out,size_t out_size,const char *raw){
         return;
     }
     char mon_str[4];
-    //for auth.log
     if (sscanf(raw,"%3s %d %d:%d:%d",mon_str,&day,&hours,&min,&sec)==5){
         static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
         int m=0;
         for (int i=0;i<12;i++) if (!strcmp(mon_str,months[i])){m=i+1;break;}
         snprintf(out,out_size,"%02d.%02d %02d:%02d",day,m,hours,min);
+        return;
+    }
+    snprintf(out,out_size,"%s",raw);
+}
+static void format_timestamp_sec(char *out,size_t out_size,const char *raw){
+    int year,mon,day,hours,min,sec;
+    if (sscanf(raw,"%d-%d-%dT%d:%d:%d",&year,&mon,&day,&hours,&min,&sec)==6){
+        snprintf(out,out_size,"%02d.%02d %02d:%02d:%02d",day,mon,hours,min,sec);
+        return;
+    }
+    char mon_str[4];
+    if (sscanf(raw,"%3s %d %d:%d:%d",mon_str,&day,&hours,&min,&sec)==5){
+        static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        int m=0;
+        for (int i=0;i<12;i++) if (!strcmp(mon_str,months[i])){m=i+1;break;}
+        snprintf(out,out_size,"%02d.%02d %02d:%02d:%02d",day,m,hours,min,sec);
         return;
     }
     snprintf(out,out_size,"%s",raw);
@@ -139,11 +154,9 @@ void check_alert(LogEntry *entry){
         entry->reason[0]=0;
         return;
     }
-    for (int i=0; i<3;i++){
-        if (strstr(entry->source,"ALPM-SCRIPTLET") && strncmp(entry->message,"==> ",4)==0){
-            memmove(entry->message,entry->message+4,strlen(entry->message)-4+1);
-        }
-    }   
+    if (strstr(entry->source,"ALPM-SCRIPTLET") && strncmp(entry->message,"==> ",4)==0){
+        memmove(entry->message,entry->message+4,strlen(entry->message)-4+1);
+    }
     for (int r=0; rules[r].pattern; r++){
         if (contains_word(lower_msg,rules[r].pattern)){
             int rank=severity_rank(rules[r].severity);
@@ -197,6 +210,7 @@ int parse_generic_log(const char *filepath,LogBuffer *buf){
         }else{
             strncpy(entry.message,line,sizeof(entry.message)-1);
         }
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
         char formatted[32];
         format_timestamp(formatted,sizeof(formatted),entry.timestamp);
         snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
@@ -238,6 +252,7 @@ int parse_pacman_log(const char *filepath,LogBuffer *buf){
         char *msg_start=p4+2;
         snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
         entry.message[strcspn(entry.message,"\n")]=0;
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
         char formatted[32];
         format_timestamp(formatted,sizeof(formatted),entry.timestamp);
         snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
@@ -266,6 +281,7 @@ int parse_auth_log(const char *filepath,LogBuffer *buf){
         char *msg_start=space+1;
         snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
         entry.message[strcspn(entry.message,"\n")]=0;
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
         char formatted[32];
         format_timestamp(formatted,sizeof(formatted),entry.timestamp);
         snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
@@ -298,7 +314,7 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
         entry.source[src_len]=0;
         snprintf(entry.message,sizeof(entry.message),"%s",space2+1);
         entry.message[strcspn(entry.message,"\n")]=0;
-
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
         char formatted[32];
         format_timestamp(formatted,sizeof(formatted),entry.timestamp);
         snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
@@ -308,4 +324,124 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
     }
     pclose(pipe);
     return read_count;
+}
+int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size){
+    char cmd[256];
+    if (last_timestamp[0]){
+        snprintf(cmd,sizeof(cmd),"journalctl -o short-iso --no-pager --since=\"%s\"",last_timestamp);
+    } else {
+        snprintf(cmd,sizeof(cmd),"journalctl -o short-iso -n 50 --no-pager");
+    }
+    FILE *pipe=popen(cmd,"r");
+    if (!pipe) return -1;
+    char line[512];
+    int read_count=0;
+    char newest_ts[32]={0};
+    while (fgets(line,sizeof(line),pipe)){
+        LogEntry entry;
+        memset(&entry,0,sizeof(entry));
+        char *space1=strchr(line,' ');
+        if (!space1) continue;
+        int ts_len=space1-line;
+        if (ts_len>=(int)sizeof(entry.timestamp)) ts_len=sizeof(entry.timestamp)-1;
+        memcpy(entry.timestamp,line,ts_len);
+        entry.timestamp[ts_len]=0;
+        if (last_timestamp[0] && strcmp(entry.timestamp,last_timestamp)==0) continue;
+        strncpy(newest_ts,entry.timestamp,sizeof(newest_ts)-1);
+
+        char *p=space1+1;
+        char *space2=strchr(p,' ');
+        if (!space2) continue;
+        int src_len=space2-p;
+        if (src_len>=(int)sizeof(entry.source)) src_len=sizeof(entry.source)-1;
+        memcpy(entry.source,p,src_len);
+        entry.source[src_len]=0;
+        snprintf(entry.message,sizeof(entry.message),"%s",space2+1);
+        entry.message[strcspn(entry.message,"\n")]=0;
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
+        check_alert(&entry);
+        log_buffer_push(buf,entry);
+        read_count++;
+    }
+    if (newest_ts[0]) snprintf(last_timestamp,ts_size,"%s",newest_ts);
+    pclose(pipe);
+    return read_count;
+}
+int parse_auth_log_incremental(const char *filepath,LogBuffer *buf,long *offset){
+    FILE *f=fopen(filepath,"r");
+    if (!f) return -1;
+    fseek(f,*offset,SEEK_SET);
+    char line[512];
+    while (fgets(line,sizeof(line),f)){
+        if (strlen(line)<16) continue;
+        LogEntry entry;
+        memset(&entry,0,sizeof(entry));
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%.15s",line);
+        char *p=line+16;
+        char *space=strchr(p,' ');
+        if (!space) continue;
+        int host_len=space-p;
+        if (host_len>=(int)sizeof(entry.source)) host_len=sizeof(entry.source)-1;
+        memcpy(entry.source,p,host_len);
+        entry.source[host_len]=0;
+        char *msg_start=space+1;
+        snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
+        entry.message[strcspn(entry.message,"\n")]=0;
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
+        check_alert(&entry);
+        log_buffer_push(buf,entry);
+    }
+    *offset=ftell(f);
+    fclose(f);
+    return buf->count;
+}
+
+int parse_pacman_log_incremental(const char *filepath,LogBuffer *buf,long *offset){
+    FILE *f=fopen(filepath,"r");
+    if (!f) return -1;
+    fseek(f,*offset,SEEK_SET);
+    char line[512];
+    while (fgets(line,sizeof(line),f)){
+        char *p1=strchr(line,'[');
+        if (!p1) continue;
+        char *p2=strchr(p1+1,']');
+        if (!p2) continue;
+        char *p3=strchr(p2+1,'[');
+        if (!p3) continue;
+        char *p4=strchr(p3+1,']');
+        if (!p4) continue;
+        LogEntry entry;
+        memset(&entry,0,sizeof(entry));
+
+        int ts_len=p2-p1-1;
+        if (ts_len<0) continue;
+        if ((size_t)ts_len>=sizeof(entry.timestamp)) ts_len=sizeof(entry.timestamp)-1;
+        memcpy(entry.timestamp,p1+1,ts_len);
+        entry.timestamp[ts_len]=0;
+        int src_len=p4-p3-1;
+        if (src_len<0) continue;
+        if ((size_t)src_len>=sizeof(entry.source)) src_len=sizeof(entry.source)-1;
+        memcpy(entry.source,p3+1,src_len);
+        entry.source[src_len]=0;
+        if ((size_t)(p4-line)+2>strlen(line)) continue;
+        char *msg_start=p4+2;
+        snprintf(entry.message,sizeof(entry.message),"%s",msg_start);
+        entry.message[strcspn(entry.message,"\n")]=0;
+        format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
+
+        char formatted[32];
+        format_timestamp(formatted,sizeof(formatted),entry.timestamp);
+        snprintf(entry.timestamp,sizeof(entry.timestamp),"%s",formatted);
+        check_alert(&entry);
+        log_buffer_push(buf,entry);
+    }
+    *offset=ftell(f);
+    fclose(f);
+    return buf->count;
 }

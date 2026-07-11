@@ -1,0 +1,23 @@
+#!/bin/sh
+
+case "$1" in
+    docker)
+        docker run \
+        gcc main.c log.c -o siem \
+            $(pkg-config --cflags --libs gtk+-3.0) \
+            -Wall
+        ;;    
+    gcc)
+        gcc main.c log.c -o siem \
+            $(pkg-config --cflags --libs gtk+-3.0) \
+            -Wall && ./siem
+
+        ;;
+    cmake)
+	    mkdir -p build && cd build && cmake .. && make && cd .. && ./build/siem
+    	;;
+    *)
+        echo "Usage: run {docker|gcc|cmake}"
+        exit 1
+        ;;
+esac
