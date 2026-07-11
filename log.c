@@ -325,6 +325,7 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
     pclose(pipe);
     return read_count;
 }
+<<<<<<< HEAD
 int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size){
     char cmd[256];
     if (last_timestamp[0]){
