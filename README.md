@@ -1,79 +1,64 @@
 # SIEM
 
-Lightweight SIEM (Security Information and Event Management) prototype with a log parsing engine and GTK3 GUI. Written in C.
+GTK3 SIEM (Security Information and Event Management) prototype — log collection, rule-based alerting, and live monitoring.
+Written in C.
 
-Educational project — not production-ready. Built to learn low-level C, GTK3, and how real SIEM systems collect/parse/alert on logs.
+## Why I built this
+
+Wanted to understand how real SIEM tools actually work under the hood — not just clicking around Splunk/Wazuh, but writing the log parsing, alert correlation, and buffering myself. Started with `pacman.log`/`auth.log`/`journalctl` as data sources since that's what's actually running on my machine.
+
+## Stack
+
+<div align="center">
+
+![C](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)
+![GTK3](https://img.shields.io/badge/GTK3-215732?style=for-the-badge&logo=gtk&logoColor=white)
+![CMake](https://img.shields.io/badge/CMake-064F8C?style=for-the-badge&logo=cmake&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+
+</div>
 
 ## Features
 
-- Custom log parsers for:
-  - `pacman.log` (Arch package manager)
-  - `auth.log` (Debian/Ubuntu style auth log — **not present on Arch**, will return empty on this distro)
-  - Live `journalctl` stream (last 100 lines)
-  - Generic log file (via File > Open, timestamp/level auto-detected if present)
-- Dynamic log buffer (malloc/realloc growable array), no fixed size limits
-- Simple rule-based alert engine:
-  - Alerts on `ERROR` / `CRITICAL` / `WARNING` levels
-  - Alerts on keyword match in message body: `error`, `failed`, `denied`, `warning`
-- GTK3 GUI:
-  - Expandable tree view (each log entry expands to show full message)
-  - Source picker: System / Auth / Pacman / All Sources
-  - "Show All Logs" toggle (default: only alerts shown)
-  - Dark/White theme switch, `Ctrl+W` theme toggle
-  - Menubar (File/View), toolbar (Start/Stop/Clear — currently stubs)
+- Log ingestion from 3 real sources + generic file import:
+  - `pacman.log`, `auth.log`, live `journalctl`
+- Incremental parsing — live capture only reads new lines (byte offset for files, `--since` timestamp for journalctl), no re-reading the whole log on every poll
+- Rule-based alert engine — ~35 keyword rules across 4 severity tiers (CRITICAL/HIGH/MEDIUM/LOW) and 6 categories (auth, network, malware, integrity, recon, system), plus log-level baseline (ERROR/WARNING/CRITICAL)
+- Whole-word matching (not naive substring), pacman noise suppression for routine install/remove/upgrade lines
+- Expandable tree view — full entry details on expand
+- TP/FP verdict marking per alert
+- CSV export
+- Dark/white theme (`Ctrl+W` toggle), fullscreen, toggleable sidebar, toggleable columns
 
-## Not implemented yet (stubs)
+## Not implemented yet
 
-- Start/Stop capture (toolbar buttons print to stdout only)
-- Clear View button
-- Network scanner (left panel button, progress bar is hardcoded demo value)
-- ML checkbox (UI only, no logic behind it)
-- Live log streaming (journal is a one-time snapshot on click, not continuous)
-- Export logs, New session, Preferences (menu items, no handlers)
-
-## Build
-
-### Makefile
-```sh
-make
-./siem
-# or
-make run   # runs with GDK_BACKEND=wayland
-```
-
-### CMake
-```sh
-mkdir build && cd build
-cmake ..
-make
-./siem
-```
-
-### Docker
-```sh
-docker build -t siem .
-docker run -it --rm \
-  -e WAYLAND_DISPLAY=$WAYLAND_DISPLAY \
-  -e XDG_RUNTIME_DIR=/tmp \
-  -v $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/$WAYLAND_DISPLAY \
-  siem
-```
+- scanner / network view (UI placeholders only)
 
 ## Dependencies
 
-- GTK3 (`libgtk-3-dev` / `gtk3` on Arch)
-- pkg-config
-- gcc
+**Arch Linux:**
+```sh
+sudo pacman -S gtk3 cmake pkgconf
+```
 
-## Behavior notes
+**Ubuntu/Debian:**
+```sh
+sudo apt install libgtk-3-dev cmake pkg-config
+```
 
-- On startup, log view is empty — pick a source from the left panel.
-- "All Sources" loads pacman + auth + journal into one buffer.
-- Switching source clears the current buffer and loads fresh (no accumulation across sources unless "All Sources" is used).
-- Default view shows only alerts; toggle "Show All Logs" to see everything parsed.
+## Build & Run
 
-## Known limitations
+```sh
+git clone https://github.com/yorjjeartemitt/SIEM.git
+cd SIEM
 
-- `AppWidgets` and its log buffer are never freed on window close (leak on exit — acceptable for a single-window app that dies with the process, not fixed yet).
-- Auth log parser expects Debian/Ubuntu-style `auth.log` format; empty on Arch systems.
-- Scanner/ML/Live-stream are UI placeholders, no backing logic.
+./run gcc     # build with gcc and run
+./run cmake   # build with cmake and run
+./run docker  # run in docker
+```
+
+## Roadmap
+
+- Network scanner with real backend (currently UI stub)
+- Hook up `scan_btn` and `scan_progress` to real functionality
+- Persistent storage (SQLite) instead of in-memory buffer only
