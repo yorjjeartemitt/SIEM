@@ -325,7 +325,8 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
     pclose(pipe);
     return read_count;
 }
-int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size,char *last_line,size_t line_size){
+
+int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size,char *last_line,size_t line_size){ 
     char cmd[256];
     if (last_timestamp[0]){
         snprintf(cmd,sizeof(cmd),"journalctl -o short-iso --no-pager --since=\"%s\"",last_timestamp);
