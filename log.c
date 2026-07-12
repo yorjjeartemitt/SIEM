@@ -325,8 +325,7 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines){
     pclose(pipe);
     return read_count;
 }
-<<<<<<< HEAD
-int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size){
+int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size,char *last_line,size_t line_size){
     char cmd[256];
     if (last_timestamp[0]){
         snprintf(cmd,sizeof(cmd),"journalctl -o short-iso --no-pager --since=\"%s\"",last_timestamp);
@@ -338,7 +337,14 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
     char line[512];
     int read_count=0;
     char newest_ts[32]={0};
+    int skipping=(last_line[0]!=0);
     while (fgets(line,sizeof(line),pipe)){
+        if (skipping){
+            if (strcmp(line,last_line)==0){
+                skipping=0;
+            }
+            continue;
+        }
         LogEntry entry;
         memset(&entry,0,sizeof(entry));
         char *space1=strchr(line,' ');
@@ -347,7 +353,6 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
         if (ts_len>=(int)sizeof(entry.timestamp)) ts_len=sizeof(entry.timestamp)-1;
         memcpy(entry.timestamp,line,ts_len);
         entry.timestamp[ts_len]=0;
-        if (last_timestamp[0] && strcmp(entry.timestamp,last_timestamp)==0) continue;
         strncpy(newest_ts,entry.timestamp,sizeof(newest_ts)-1);
 
         char *p=space1+1;
@@ -366,6 +371,8 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
         check_alert(&entry);
         log_buffer_push(buf,entry);
         read_count++;
+        strncpy(last_line,line,line_size-1);
+        last_line[line_size-1]=0;
     }
     if (newest_ts[0]) snprintf(last_timestamp,ts_size,"%s",newest_ts);
     pclose(pipe);
@@ -406,7 +413,17 @@ int parse_auth_log_incremental(const char *filepath,LogBuffer *buf,long *offset)
 int parse_pacman_log_incremental(const char *filepath,LogBuffer *buf,long *offset){
     FILE *f=fopen(filepath,"r");
     if (!f) return -1;
-    fseek(f,*offset,SEEK_SET);
+    fseek(f,0,SEEK_END);
+    long file_size=ftell(f);
+    if (*offset==0 && file_size>65536){
+        long start=file_size-65536;
+        fseek(f,start,SEEK_SET);
+        char discard[512];
+        fgets(discard,sizeof(discard),f);
+    }else{
+        fseek(f,*offset,SEEK_SET);
+    }
+
     char line[512];
     while (fgets(line,sizeof(line),f)){
         char *p1=strchr(line,'[');

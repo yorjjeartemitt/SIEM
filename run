@@ -2,22 +2,27 @@
 
 case "$1" in
     docker)
-        docker run \
-        gcc main.c log.c -o siem \
-            $(pkg-config --cflags --libs gtk+-3.0) \
-            -Wall
-        ;;    
+        docker build -t siem . && \
+        docker run -it --rm \
+            -e XDG_RUNTIME_DIR=/tmp \
+            -v "$XDG_RUNTIME_DIR/wayland-1:/tmp/wayland-1" \
+            -v "$(pwd)/siem.db:/app/siem.db" \
+            siem
+        ;;
     gcc)
-        gcc main.c log.c -o siem \
-            $(pkg-config --cflags --libs gtk+-3.0) \
-            -Wall && ./siem
-
+        gcc main.c log.c db.c -o siem $(pkg-config --cflags --libs gtk+-3.0 sqlite3) -Wall && ./siem
         ;;
     cmake)
 	    mkdir -p build && cd build && cmake .. && make && cd .. && ./build/siem
     	;;
+    make)
+        make run
+        ;;
+    clean)
+        rm -rf siem.db siem build
+        ;;
     *)
-        echo "Usage: run {docker|gcc|cmake}"
+        echo "Usage: run {docker|gcc|cmake|make|clean}"
         exit 1
         ;;
 esac

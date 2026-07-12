@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
-#include "log.h"
 #include <string.h>
+#include "db.h"
+#include "log.h"
 typedef enum{
 	SRC_NONE,SRC_ALL,SRC_SYSTEM,SRC_AUTH,SRC_PACMAN
 } SourceType;
@@ -22,18 +23,24 @@ typedef struct{
 	long auth_log_offset;
 	long pacman_log_offset;
 	char last_jounal_ts[32];
+	char last_jounal_line[512];
 	GtkWidget *left_panel;
 	gboolean sidebar_visible;
+	sqlite3 *db;
 } AppWidgets;
 static void set_dark(GtkMenuItem *item,gpointer data){
-	(void)item;(void)data;
+	(void)item;
+	AppWidgets *aw=(AppWidgets*)data;
 	GtkSettings *settings=gtk_settings_get_default();
 	g_object_set(settings,"gtk-application-prefer-dark-theme",TRUE,NULL);
+	db_set_state(aw->db,"theme","dark");
 }
 static void set_white(GtkMenuItem *item,gpointer data){
-	(void)item;(void)data;
+	(void)item;
+	AppWidgets *aw=(AppWidgets*)data;
 	GtkSettings *settings=gtk_settings_get_default();
 	g_object_set(settings,"gtk-application-prefer-dark-theme",FALSE,NULL);
+	db_set_state(aw->db,"theme","light");
 }
 static void quit(GtkMenuItem *item,gpointer data){
 	g_application_quit(G_APPLICATION(data));
@@ -54,6 +61,7 @@ static void toggle_fullscreen(GtkMenuItem *item,gpointer data){
 		gtk_window_fullscreen(GTK_WINDOW(aw->window));
 	}
 	is_fullscreen=!is_fullscreen;
+	db_set_state(aw->db,"fullscreen",is_fullscreen ? "1":"0");
 }
 static GtkWidget* make_menu_item(const char *label,GCallback callback,gpointer data){
 	GtkWidget *item=gtk_menu_item_new_with_label(label);
@@ -73,9 +81,9 @@ static void append_page_to_tree(AppWidgets *aw,LogBuffer *buf){
 		snprintf(full_details,sizeof(full_details),"Time: %s\nSource: %s\nMessage: %s\nSeverity: %s\nReason: %s\nCategory: %s",buf->data[i].timestamp_sec,buf->data[i].source,buf->data[i].message,buf->data[i].severity,buf->data[i].reason,buf->data[i].category);
 		GtkTreeIter parent_iter,child_iter;
 		gtk_tree_store_append(aw->store,&parent_iter,NULL);
-		gtk_tree_store_set(aw->store,&parent_iter,0,"",1,buf->data[i].timestamp,2,buf->data[i].source,3,short_msg,4,buf->data[i].severity,5,buf->data[i].reason,6,buf->data[i].category,7,buf->data[i].verdict,-1);
+		gtk_tree_store_set(aw->store,&parent_iter,0,"",1,buf->data[i].timestamp,2,buf->data[i].source,3,short_msg,4,buf->data[i].severity,5,buf->data[i].reason,6,buf->data[i].category,7,buf->data[i].verdict,8,i,-1);
 		gtk_tree_store_append(aw->store,&child_iter,&parent_iter);
-		gtk_tree_store_set(aw->store,&child_iter,0,"",1,"",2,"",3,full_details,4,"",5,"",6,"",7,"",-1);
+		gtk_tree_store_set(aw->store,&child_iter,0,"",1,"",2,"",3,full_details,4,"",5,"",6,"",7,"",8,i,-1);
 		shown++;
 	}
 }
@@ -107,6 +115,41 @@ static void on_toggle_show_all(GtkToggleButton *btn,gpointer data){
 }
 static void load_source(AppWidgets *aw, SourceType src){
 	reset_buffer(aw);
+	int before=aw->current_buf.count;
+    switch(src){
+        case SRC_PACMAN:
+            aw->pacman_log_offset = 0;
+            break;
+        case SRC_AUTH:
+            aw->auth_log_offset = 0;
+            break;
+        case SRC_SYSTEM:
+            aw->last_jounal_ts[0] = 0;
+            break;
+        case SRC_ALL:
+            aw->pacman_log_offset = 0;
+            aw->auth_log_offset = 0;
+            aw->last_jounal_ts[0] = 0;
+            break;
+		default: break;
+    }
+	switch(src){
+		case SRC_PACMAN:
+			aw->pacman_log_offset=0;
+			break;
+		case SRC_AUTH:
+			aw->auth_log_offset=0;
+			break;
+		case SRC_SYSTEM:
+			aw->last_jounal_ts[0]=0;
+			break;
+		case SRC_ALL:
+			aw->pacman_log_offset=0;
+			aw->auth_log_offset=0;
+			aw->last_jounal_ts[0]=0;
+			break;
+		default: break;
+	}
 	switch(src){
 		case SRC_PACMAN:
 			parse_pacman_log_incremental("/var/log/pacman.log",&aw->current_buf,&aw->pacman_log_offset);
@@ -115,20 +158,35 @@ static void load_source(AppWidgets *aw, SourceType src){
 			parse_auth_log_incremental("/var/log/auth.log",&aw->current_buf,&aw->auth_log_offset);
 			break;
 		case SRC_SYSTEM:
-			parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts));
+            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts),aw->last_jounal_line,sizeof(aw->last_jounal_line));
 			break;
 		case SRC_ALL:
 			parse_pacman_log_incremental("/var/log/pacman.log",&aw->current_buf,&aw->pacman_log_offset);
 			parse_auth_log_incremental("/var/log/auth.log",&aw->current_buf,&aw->auth_log_offset);
-			parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts));
+            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts),aw->last_jounal_line,sizeof(aw->last_jounal_line));
 			break;
 		default: break;
 	}
 	aw->active_source=src;
+	for (int i=before;i<aw->current_buf.count;i++){	
+		LogEntry *e=&aw->current_buf.data[i];
+		if (e->is_alert) db_insert_log(aw->db,e);
+		char v[8];
+		if (db_get_verdict(aw->db,e,v,sizeof(v))){
+			snprintf(e->verdict,sizeof(e->verdict),"%s",v);
+		}
+	}
 	reload_tree_from_buffer(aw,&aw->current_buf);
 }
-static void new_session(GtkMenuItem *item,gpointer data){ (void)item; reset_buffer((AppWidgets*)data); }
-
+static void new_session(GtkMenuItem *item,gpointer data){ 
+	(void)item;
+	AppWidgets *aw=(AppWidgets*)data;
+	reset_buffer(aw);
+	aw->pacman_log_offset=0;
+	aw->auth_log_offset=0;
+	aw->last_jounal_ts[0]=0;
+	aw->active_source=SRC_NONE;
+}
 static void on_source_pacman(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_PACMAN); }
 static void on_source_auth(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_AUTH); }
 static void on_source_journal(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_SYSTEM); }
@@ -139,18 +197,30 @@ static void on_window_destroy(GtkWidget *widget,gpointer data){
 	AppWidgets *aw=(AppWidgets*)data;
 	if (aw->is_capturing) g_source_remove(aw->capture_timer_id);
 	log_buffer_free(&aw->current_buf);
+	db_close(aw->db);
 	free(aw);
 }
 
 static void on_open_file(GtkMenuItem *item,gpointer data){
+	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
-	GtkWidget *dialog=gtk_file_chooser_dialog_new("Open log file",NULL,GTK_FILE_CHOOSER_ACTION_OPEN,"_Cancel",GTK_RESPONSE_CANCEL,"_Open",GTK_RESPONSE_ACCEPT,NULL);
+	GtkWidget *dialog=gtk_file_chooser_dialog_new("Open log file",GTK_WINDOW(aw->window),GTK_FILE_CHOOSER_ACTION_OPEN,"_Cancel",GTK_RESPONSE_CANCEL,"_Open",GTK_RESPONSE_ACCEPT,NULL);
 	if (gtk_dialog_run(GTK_DIALOG(dialog))==GTK_RESPONSE_ACCEPT){
 		char *filename=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
 		if (filename) {
 			reset_buffer(aw);
+			int before=aw->current_buf.count;
 			parse_generic_log(filename,&aw->current_buf);
+			for (int i=before;i<aw->current_buf.count;i++){
+				LogEntry *e=&aw->current_buf.data[i];
+				if (e->is_alert) db_insert_log(aw->db,e);
+				char v[8];
+				if (db_get_verdict(aw->db,e,v,sizeof(v))){
+					snprintf(e->verdict,sizeof(e->verdict),"%s",v);
+				}
+			}
 			reload_tree_from_buffer(aw,&aw->current_buf);
+			db_set_state(aw->db,"open_file",filename);
 			g_free(filename);
 		}
 	}
@@ -176,29 +246,31 @@ static gboolean capture_tick(gpointer data){
             parse_auth_log_incremental("/var/log/auth.log",&aw->current_buf,&aw->auth_log_offset);
             break;
         case SRC_SYSTEM:
-            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts));
+            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts),aw->last_jounal_line,sizeof(aw->last_jounal_line));
             break;
         case SRC_ALL:
             parse_pacman_log_incremental("/var/log/pacman.log",&aw->current_buf,&aw->pacman_log_offset);
             parse_auth_log_incremental("/var/log/auth.log",&aw->current_buf,&aw->auth_log_offset);
-            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts));
+            parse_journalctl_incremental(&aw->current_buf,aw->last_jounal_ts,sizeof(aw->last_jounal_ts),aw->last_jounal_line,sizeof(aw->last_jounal_line));
             break;
         default: break;
     }
-
-    if (aw->current_buf.count>before){
-        for (int i=before;i<aw->current_buf.count;i++){
-            LogEntry *e=&aw->current_buf.data[i];
-            if (!aw->show_all && !e->is_alert) continue;
-            char short_msg[64];
-            snprintf(short_msg,sizeof(short_msg),"%.60s%s",e->message,strlen(e->message)>60?"...":"");
-            GtkTreeIter parent_iter,child_iter;
-            gtk_tree_store_append(aw->store,&parent_iter,NULL);
-            gtk_tree_store_set(aw->store,&parent_iter,0,"",1,e->timestamp,2,e->source,3,short_msg,4,e->severity,5,e->reason,6,e->category,7,e->verdict,-1);
-            gtk_tree_store_append(aw->store,&child_iter,&parent_iter);
-            gtk_tree_store_set(aw->store,&child_iter,0,"",1,"",2,"",3,e->message,4,"",5,"",6,"",7,"",-1);
-        }
-    }
+	for (int i=before;i<aw->current_buf.count;i++){
+		LogEntry *e=&aw->current_buf.data[i];
+		if (e->is_alert) db_insert_log(aw->db,e);
+		char v[8];
+		if (db_get_verdict(aw->db,e,v,sizeof(v))){
+			snprintf(e->verdict,sizeof(e->verdict),"%s",v);
+		}
+		if (!aw->show_all && !e->is_alert) continue;
+		char short_msg[64];
+		snprintf(short_msg,sizeof(short_msg),"%.60s%s",e->message,strlen(e->message)>60?"...":"");
+		GtkTreeIter parent_iter,child_iter;
+		gtk_tree_store_append(aw->store,&parent_iter,NULL);
+		gtk_tree_store_set(aw->store,&parent_iter,0,"",1,e->timestamp,2,e->source,3,short_msg,4,e->severity,5,e->reason,6,e->category,7,e->verdict,8,i,-1);
+		gtk_tree_store_append(aw->store,&child_iter,&parent_iter);
+		gtk_tree_store_set(aw->store,&child_iter,0,"",1,"",2,"",3,e->message,4,"",5,"",6,"",7,"",8,i,-1);   
+	}
     return G_SOURCE_CONTINUE;
 }
 static void mark_tp(GtkToolButton *btn,gpointer data){
@@ -210,6 +282,12 @@ static void mark_tp(GtkToolButton *btn,gpointer data){
 	if (!gtk_tree_selection_get_selected(sel,&model,&iter)) return;
 	GtkTreeIter parent;
 	if (gtk_tree_model_iter_parent(model,&parent,&iter)) iter=parent;
+	gint idx;
+	gtk_tree_model_get(model,&iter,8,&idx,-1);
+	if (idx<0 || idx>=aw->current_buf.count) return;
+	LogEntry *e=&aw->current_buf.data[idx];
+	snprintf(e->verdict,sizeof(e->verdict),"TP");
+	db_set_verdict(aw->db,e,"TP");
 	gtk_tree_store_set(aw->store,&iter,7,"TP",-1);
 }
 static void mark_fp(GtkToolButton *btn,gpointer data){
@@ -221,6 +299,12 @@ static void mark_fp(GtkToolButton *btn,gpointer data){
 	if (!gtk_tree_selection_get_selected(sel,&model,&iter)) return;
 	GtkTreeIter parent;
 	if (gtk_tree_model_iter_parent(model,&parent,&iter)) iter=parent;
+	gint idx;
+	gtk_tree_model_get(model,&iter,8,&idx,-1);
+	if (idx<0 || idx>=aw->current_buf.count) return;
+	LogEntry *e=&aw->current_buf.data[idx];
+	snprintf(e->verdict,sizeof(e->verdict),"FP");
+	db_set_verdict(aw->db,e,"FP");
 	gtk_tree_store_set(aw->store,&iter,7,"FP",-1);
 }
 static void start_capture(GtkToolButton *btn,gpointer data){
@@ -229,6 +313,7 @@ static void start_capture(GtkToolButton *btn,gpointer data){
 	aw->is_capturing=TRUE;
 	aw->capture_timer_id=g_timeout_add(2000,capture_tick,aw);
 	gtk_label_set_text(GTK_LABEL(aw->status_label)," ● REC ");
+	db_set_state(aw->db,"is_capturing","1");
 }
 static void stop_capture(GtkToolButton *btn,gpointer data){
 	AppWidgets *aw=(AppWidgets*)data;
@@ -236,15 +321,20 @@ static void stop_capture(GtkToolButton *btn,gpointer data){
 	g_source_remove(aw->capture_timer_id);
 	aw->is_capturing=FALSE;
 	gtk_label_set_text(GTK_LABEL(aw->status_label)," ○ stopped ");
+	db_set_state(aw->db,"is_capturing","0");
 }
 static void clear_view(GtkToolButton *btn,gpointer data){ (void)btn; reset_buffer((AppWidgets*)data); }
 static void switch_to_network(GtkMenuItem *item,gpointer data){
+	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
 	gtk_stack_set_visible_child_name(GTK_STACK(aw->stack),"network");
+	db_set_state(aw->db,"active_view","network");
 }
 static void switch_to_syslog(GtkMenuItem *item,gpointer data){
+	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
 	gtk_stack_set_visible_child_name(GTK_STACK(aw->stack),"syslog");
+	db_set_state(aw->db,"active_view","syslog");
 }
 static void toggle_col(GtkCheckMenuItem *item,gpointer data){
 	GtkTreeViewColumn *col=(GtkTreeViewColumn*)data;
@@ -269,16 +359,17 @@ static void toggle_sidebar(GtkMenuItem *item,gpointer data){
 	AppWidgets *aw=(AppWidgets*)data;
 	aw->sidebar_visible=!aw->sidebar_visible;
 	gtk_widget_set_visible(aw->left_panel,aw->sidebar_visible);
+	db_set_state(aw->db,"sidebar_visible",aw->sidebar_visible ? "1":"0");
 }
 static void export_logs(GtkMenuItem *item,gpointer data){
 	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
 	GtkWidget *dialog=gtk_file_chooser_dialog_new("Export logs",GTK_WINDOW(aw->window),GTK_FILE_CHOOSER_ACTION_SAVE,"_Cancel",GTK_RESPONSE_CANCEL,"_Save",GTK_RESPONSE_ACCEPT,NULL);
-	gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),"export.csv");
+	gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),"log.csv");
 	if (gtk_dialog_run(GTK_DIALOG(dialog))==GTK_RESPONSE_ACCEPT){
 		char *filename=gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-		FILE *f=fopen(filename,"w");
-		if (f){
+		if (filename){
+			FILE *f=fopen(filename,"w");
 			fprintf(f,"timestamp,source,message,severity,reason,category,verdict\n");
 			for (int i=0;i<aw->current_buf.count;i++){
 				LogEntry *e=&aw->current_buf.data[i];
@@ -304,8 +395,8 @@ static void menu_bar(GtkWidget *box,GtkApplication *app,AppWidgets *aw){
 	gtk_menu_shell_append(GTK_MENU_SHELL(menubar),file_item);
 
 	GtkWidget *theme_menu=gtk_menu_new();
-	gtk_menu_shell_append(GTK_MENU_SHELL(theme_menu),make_menu_item("Dark",G_CALLBACK(set_dark),NULL));
-	gtk_menu_shell_append(GTK_MENU_SHELL(theme_menu),make_menu_item("White",G_CALLBACK(set_white),NULL));
+	gtk_menu_shell_append(GTK_MENU_SHELL(theme_menu),make_menu_item("Dark",G_CALLBACK(set_dark),aw));
+	gtk_menu_shell_append(GTK_MENU_SHELL(theme_menu),make_menu_item("White",G_CALLBACK(set_white),aw));
 
 	GtkWidget *theme_item=gtk_menu_item_new_with_label("Theme");
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(theme_item),theme_menu);
@@ -443,7 +534,7 @@ static void activate(GtkApplication *app, gpointer data){
 	gtk_stack_add_named(GTK_STACK(stack),scroll,"syslog");
 	gtk_stack_add_named(GTK_STACK(stack),network_placeholder,"network");
 
-	GtkTreeStore *store=gtk_tree_store_new(8,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING);
+	GtkTreeStore *store=gtk_tree_store_new(9,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_INT);
 	gtk_tree_view_set_model(GTK_TREE_VIEW(tree),GTK_TREE_MODEL(store));
 	AppWidgets *aw=malloc(sizeof(AppWidgets));
 	aw->tree=tree;
@@ -461,6 +552,7 @@ static void activate(GtkApplication *app, gpointer data){
 	aw->auth_log_offset=0;
 	aw->pacman_log_offset=0;
 	aw->last_jounal_ts[0]=0;
+	aw->last_jounal_line[0]=0;
 	g_signal_connect(window,"destroy",G_CALLBACK(on_window_destroy),aw);
 	g_signal_connect(tree,"button-press-event",G_CALLBACK(on_header_click),aw);
 	g_signal_connect(scroll,"edge-reached",G_CALLBACK(on_scroll_edge_reached),aw);
@@ -522,7 +614,34 @@ static void activate(GtkApplication *app, gpointer data){
 	gtk_tree_view_append_column(GTK_TREE_VIEW(tree),aw->cols[6]);
 	gtk_tree_view_column_set_resizable(aw->cols[6],TRUE);
 	gtk_tree_view_column_set_min_width(aw->cols[6],20);
-	
+
+	sqlite3 *db;
+	db_open(&db,"siem.db");
+	aw->db=db;
+	db_load_all_logs(db,&aw->current_buf);
+	reload_tree_from_buffer(aw,&aw->current_buf);
+	char buf_state[512];
+	if (db_get_state(db,"theme",buf_state,sizeof(buf_state))){
+		GtkSettings *settings=gtk_settings_get_default();
+		g_object_set(settings,"gtk-application-prefer-dark-theme",!strcmp(buf_state,"dark"),NULL);
+	}
+	if (db_get_state(db,"open_file",buf_state,sizeof(buf_state))){
+  		parse_generic_log(buf_state,&aw->current_buf);
+	}
+	if (db_get_state(db,"active_view",buf_state,sizeof(buf_state))){
+		gtk_stack_set_visible_child_name(GTK_STACK(aw->stack),buf_state);
+	}
+	if (db_get_state(db,"sidebar_visible",buf_state,sizeof(buf_state))){
+		aw->sidebar_visible = !strcmp(buf_state,"1");
+		gtk_widget_set_visible(aw->left_panel, aw->sidebar_visible);
+	}
+	if (db_get_state(db,"fullscreen",buf_state,sizeof(buf_state)) && !strcmp(buf_state,"1")){
+		gtk_window_fullscreen(GTK_WINDOW(window));
+		is_fullscreen=TRUE;
+	}
+	if (db_get_state(db,"is_capturing",buf_state,sizeof(buf_state)) && !strcmp(buf_state,"1")){
+		start_capture(NULL,aw);
+	}
 	g_object_unref(store);
 	gtk_widget_show_all(window);
 	gtk_paned_set_position(GTK_PANED(paned),200);
