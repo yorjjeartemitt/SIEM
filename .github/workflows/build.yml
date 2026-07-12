@@ -1,6 +1,10 @@
 name: Build
 
-on: [push]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   build:
@@ -9,7 +13,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt install -y libgtk-3-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libsqlite3-dev pkg-config
 
       - name: Build
-        run: gcc -o siem main.c log.c $(pkg-config --cflags --libs gtk+-3.0) -Wall
+        run: gcc -o siem main.c log.c db.c $(pkg-config --cflags --libs gtk+-3.0 sqlite3) -Wall -Wextra -Werror
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: siem-binary
+          path: siem
