@@ -43,6 +43,7 @@ static void set_white(GtkMenuItem *item,gpointer data){
 	db_set_state(aw->db,"theme","light");
 }
 static void quit(GtkMenuItem *item,gpointer data){
+	(void)item;
 	g_application_quit(G_APPLICATION(data));
 }
 static void toggle_for_theme(GtkWindow *window,gpointer data){
@@ -54,6 +55,7 @@ static void toggle_for_theme(GtkWindow *window,gpointer data){
 }
 static gboolean is_fullscreen=FALSE;
 static void toggle_fullscreen(GtkMenuItem *item,gpointer data){
+	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
 	if (is_fullscreen){
 		gtk_window_unfullscreen(GTK_WINDOW(aw->window));
@@ -227,6 +229,7 @@ static void on_open_file(GtkMenuItem *item,gpointer data){
 	gtk_widget_destroy(dialog);
 }
 static void on_scroll_edge_reached(GtkScrolledWindow *sw,GtkPositionType pos,gpointer data){
+	(void)sw;
 	if (pos!=GTK_POS_BOTTOM) return;
 	AppWidgets *aw=(AppWidgets*)data;
 	aw->page_offset+=aw->page_size;
@@ -308,6 +311,7 @@ static void mark_fp(GtkToolButton *btn,gpointer data){
 	gtk_tree_store_set(aw->store,&iter,7,"FP",-1);
 }
 static void start_capture(GtkToolButton *btn,gpointer data){
+	(void)btn;
 	AppWidgets *aw=(AppWidgets*)data;
 	if (aw->is_capturing) return;
 	aw->is_capturing=TRUE;
@@ -316,6 +320,7 @@ static void start_capture(GtkToolButton *btn,gpointer data){
 	db_set_state(aw->db,"is_capturing","1");
 }
 static void stop_capture(GtkToolButton *btn,gpointer data){
+	(void)btn;
 	AppWidgets *aw=(AppWidgets*)data;
 	if (!aw->is_capturing) return;
 	g_source_remove(aw->capture_timer_id);
@@ -341,6 +346,7 @@ static void toggle_col(GtkCheckMenuItem *item,gpointer data){
 	gtk_tree_view_column_set_visible(col,gtk_check_menu_item_get_active(item));
 }
 static gboolean on_header_click(GtkWidget *widget,GdkEventButton *event,gpointer data){
+	(void)widget;
 	if (event->button!=3) return FALSE;
 	AppWidgets *aw=(AppWidgets*)data;
 	GtkWidget *menu=gtk_menu_new();
@@ -510,6 +516,7 @@ static GtkWidget* left_panel_analyst(AppWidgets *aw){
 	return panel;
 }
 static void activate(GtkApplication *app, gpointer data){
+	(void)data;
 	GtkCssProvider *provider=gtk_css_provider_new();
 	gtk_css_provider_load_from_data(provider,"menubar{padding:0px;min-height:0px;}" "menubar menuitem{padding:2px 6px}",-1,NULL);
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(provider),GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
