@@ -25,7 +25,7 @@ case "$1" in
         make run
         ;;
     clean)
-        rm -rf siem.db siem build log.o main.o db.o
+        rm -rf siem.db siem build log.o main.o db.o network/net_capture.o network/net_proto.o network/net_proto_tcp.o network/net_proto_udp.o
         ;;
     *)
         echo "Usage: run {docker|gcc|cmake|make|clean}"
