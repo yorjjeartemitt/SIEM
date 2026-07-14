@@ -1,17 +1,30 @@
-CC = gcc
-CFLAGS = -Wall -g `pkg-config --cflags gtk+-3.0`
-LIBS = `pkg-config --libs gtk+-3.0`
-SRC = main.c log.c db.c
-BIN = siem
+CC?=gcc
+CFLAGS?= -Wall -Wextra -O2 -Inetwork
+LDFLAGS?=
 
-$(BIN): $(SRC) log.h
-	$(CC) $(SRC) -o $(BIN) $(CFLAGS) $(LIBS)
+PKG_CFLAGS:=$(shell pkg-config --cflags gtk+-3.0)
+PKG_LIBS:=$(shell pkg-config --libs gtk+-3.0)
 
-run: $(BIN)
-	GDK_BACKEND=wayland ./$(BIN)
+SRCS:=main.c network/net_capture.c network/net_proto.c network/net_proto_tcp.c network/net_proto_udp.c db.c log.c
+
+OBJS:=$(SRCS:.c=.o)
+TARGET:=siem
+
+.PHONY: all run clean caps
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	@$(CC) $(OBJS) $(PKG_CFLAGS) $(PKG_LIBS) -lpcap -lsqlite3 $(LDFLAGS) -o $@
+
+%.o: %.c
+	@$(CC) $(CFLAGS) $(PKG_CFLAGS) -c $< -o $@
+
+caps: $(TARGET)
+	sudo setcap cap_net_raw,cap_net_admin=eip $(TARGET)
+
+run: caps
+	./$(TARGET)
 
 clean:
-	rm -f $(BIN)
-	rm -f siem.db
-
-.PHONY: run clean
+	rm -f $(OBJS) $(TARGET)

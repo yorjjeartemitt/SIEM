@@ -2,6 +2,8 @@
 #include <string.h>
 #include "db.h"
 #include "log.h"
+#include "network/net_capture.h"
+
 typedef enum{
 	SRC_NONE,SRC_ALL,SRC_SYSTEM,SRC_AUTH,SRC_PACMAN
 } SourceType;
@@ -27,6 +29,10 @@ typedef struct{
 	GtkWidget *left_panel;
 	gboolean sidebar_visible;
 	sqlite3 *db;
+	GtkWidget *net_tree;
+	GtkListStore *net_store;
+	GtkTreeViewColumn *net_cols[5];
+	NetCapture *net_cap;
 } AppWidgets;
 static void set_dark(GtkMenuItem *item,gpointer data){
 	(void)item;
@@ -198,6 +204,7 @@ static void on_window_destroy(GtkWidget *widget,gpointer data){
 	(void)widget;
 	AppWidgets *aw=(AppWidgets*)data;
 	if (aw->is_capturing) g_source_remove(aw->capture_timer_id);
+	if (aw->net_cap) net_capture_close(aw->net_cap);
 	log_buffer_free(&aw->current_buf);
 	db_close(aw->db);
 	free(aw);
@@ -235,10 +242,21 @@ static void on_scroll_edge_reached(GtkScrolledWindow *sw,GtkPositionType pos,gpo
 	aw->page_offset+=aw->page_size;
 	reload_tree_from_buffer(aw,&aw->current_buf);
 }
+static void on_net_packet(const NetPacket *pkt,void *user_data){
+	AppWidgets *aw=(AppWidgets*)user_data;
+	GtkTreeIter iter;
+	gtk_list_store_append(aw->net_store,&iter);
+	gtk_list_store_set(aw->net_store,&iter,0,pkt->timestamp,1,pkt->src_ip,2,pkt->dst_ip,3,pkt->proto_str,4,pkt->info,-1);
+	if (pkt->is_alert){
+		g_print("[NEW ALERT] %s: %s -> %s [%s] %s\n",pkt->alert_reason,pkt->src_ip,pkt->dst_ip,pkt->proto_str,pkt->info);
+	}
+}
 static gboolean capture_tick(gpointer data){
     AppWidgets *aw=(AppWidgets*)data;
     if (aw->active_source==SRC_NONE) return G_SOURCE_CONTINUE;
-
+    if (aw->net_cap){
+    	net_capture_poll(aw->net_cap,200,on_net_packet,aw);
+    }
     int before=aw->current_buf.count;
 
     switch(aw->active_source){
@@ -314,6 +332,11 @@ static void start_capture(GtkToolButton *btn,gpointer data){
 	(void)btn;
 	AppWidgets *aw=(AppWidgets*)data;
 	if (aw->is_capturing) return;
+	char errbuf[PCAP_ERRBUF_SIZE];
+	aw->net_cap=net_capture_open_live(NULL,1,0,"",errbuf);
+	if (!aw->net_cap){
+		g_print("net_capture_open_live failed: %s\n",errbuf);
+	}
 	aw->is_capturing=TRUE;
 	aw->capture_timer_id=g_timeout_add(2000,capture_tick,aw);
 	gtk_label_set_text(GTK_LABEL(aw->status_label)," ● REC ");
@@ -325,10 +348,36 @@ static void stop_capture(GtkToolButton *btn,gpointer data){
 	if (!aw->is_capturing) return;
 	g_source_remove(aw->capture_timer_id);
 	aw->is_capturing=FALSE;
+	if (aw->net_cap){
+		net_capture_close(aw->net_cap);
+		aw->net_cap=NULL;
+	}
 	gtk_label_set_text(GTK_LABEL(aw->status_label)," ○ stopped ");
 	db_set_state(aw->db,"is_capturing","0");
 }
 static void clear_view(GtkToolButton *btn,gpointer data){ (void)btn; reset_buffer((AppWidgets*)data); }
+
+static GtkWidget* build_network_view(AppWidgets *aw){
+	GtkWidget *scroll=gtk_scrolled_window_new(NULL,NULL);
+	GtkWidget *tree=gtk_tree_view_new();
+	aw->net_tree=tree;
+	aw->net_store=gtk_list_store_new(5,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING);
+	gtk_tree_view_set_model(GTK_TREE_VIEW(tree),GTK_TREE_MODEL(aw->net_store));
+	const char *titles[5]={"Time","Source","Destination","Protocol","Info"};
+	for (int i=0;i<5;i++){
+		aw->net_cols[i]=gtk_tree_view_column_new_with_attributes(titles[i],gtk_cell_renderer_text_new(),"text",i,NULL);
+		gtk_tree_view_column_set_resizable(aw->net_cols[i],TRUE);
+		gtk_tree_view_column_set_sort_column_id(aw->net_cols[i],i);
+		gtk_tree_view_append_column(GTK_TREE_VIEW(tree),aw->net_cols[i]);
+	}
+	gtk_tree_view_column_set_min_width(aw->net_cols[0],90);
+	gtk_tree_view_column_set_min_width(aw->net_cols[1],120);
+	gtk_tree_view_column_set_min_width(aw->net_cols[2],120);
+	gtk_tree_view_column_set_min_width(aw->net_cols[3],60);
+	gtk_tree_view_column_set_expand(aw->net_cols[4],TRUE);
+	gtk_container_add(GTK_CONTAINER(scroll),tree);
+	return scroll;
+}
 static void switch_to_network(GtkMenuItem *item,gpointer data){
 	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
@@ -494,22 +543,7 @@ static GtkWidget* left_panel_analyst(AppWidgets *aw){
 	gtk_widget_set_tooltip_text(btn_pacman,"pacman.log");
 	g_signal_connect(btn_pacman,"clicked",G_CALLBACK(on_source_pacman),aw);
 	gtk_box_pack_start(GTK_BOX(panel),btn_pacman,FALSE,FALSE,0);
-
 	gtk_box_pack_start(GTK_BOX(panel),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,5);
-	GtkWidget *scanner_label=gtk_label_new("Scanner");
-	gtk_box_pack_start(GTK_BOX(panel),scanner_label,FALSE,FALSE,0);
-
-	GtkWidget *scan_btn=gtk_button_new_with_label("Scan Network");
-	gtk_box_pack_start(GTK_BOX(panel),scan_btn,FALSE,FALSE,0);
-
-	GtkWidget *scan_progress=gtk_progress_bar_new();
-	gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(scan_progress),0.73);
-	gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(scan_progress),TRUE);
-	gtk_progress_bar_set_text(GTK_PROGRESS_BAR(scan_progress),"930 / 1240 completed");
-	gtk_box_pack_start(GTK_BOX(panel),scan_progress,FALSE,FALSE,0);
-
-	gtk_box_pack_start(GTK_BOX(panel),gtk_separator_new(GTK_ORIENTATION_HORIZONTAL),FALSE,FALSE,5);
-
 	GtkWidget *show_all_cb=gtk_check_button_new_with_label("Show All Logs");
 	g_signal_connect(show_all_cb,"toggled",G_CALLBACK(on_toggle_show_all),aw);
 	gtk_box_pack_start(GTK_BOX(panel),show_all_cb,FALSE,FALSE,0);
@@ -537,9 +571,6 @@ static void activate(GtkApplication *app, gpointer data){
 	gtk_container_add(GTK_CONTAINER(scroll),tree);
 
 	GtkWidget *stack=gtk_stack_new();
-	GtkWidget *network_placeholder=gtk_label_new("TODO: network capture");
-	gtk_stack_add_named(GTK_STACK(stack),scroll,"syslog");
-	gtk_stack_add_named(GTK_STACK(stack),network_placeholder,"network");
 
 	GtkTreeStore *store=gtk_tree_store_new(9,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_STRING,G_TYPE_INT);
 	gtk_tree_view_set_model(GTK_TREE_VIEW(tree),GTK_TREE_MODEL(store));
@@ -560,6 +591,11 @@ static void activate(GtkApplication *app, gpointer data){
 	aw->pacman_log_offset=0;
 	aw->last_jounal_ts[0]=0;
 	aw->last_jounal_line[0]=0;
+	aw->net_cap=NULL;
+	GtkWidget *network_view=build_network_view(aw);
+	gtk_stack_add_named(GTK_STACK(stack),scroll,"syslog");
+	gtk_stack_add_named(GTK_STACK(stack),network_view,"network");
+
 	g_signal_connect(window,"destroy",G_CALLBACK(on_window_destroy),aw);
 	g_signal_connect(tree,"button-press-event",G_CALLBACK(on_header_click),aw);
 	g_signal_connect(scroll,"edge-reached",G_CALLBACK(on_scroll_edge_reached),aw);
@@ -634,9 +670,6 @@ static void activate(GtkApplication *app, gpointer data){
 	}
 	if (db_get_state(db,"open_file",buf_state,sizeof(buf_state))){
   		parse_generic_log(buf_state,&aw->current_buf);
-	}
-	if (db_get_state(db,"active_view",buf_state,sizeof(buf_state))){
-		gtk_stack_set_visible_child_name(GTK_STACK(aw->stack),buf_state);
 	}
 	if (db_get_state(db,"sidebar_visible",buf_state,sizeof(buf_state))){
 		aw->sidebar_visible = !strcmp(buf_state,"1");

@@ -10,16 +10,22 @@ case "$1" in
             siem
         ;;
     gcc)
-        gcc main.c log.c db.c -o siem $(pkg-config --cflags --libs gtk+-3.0 sqlite3) -Wall && ./siem
+        gcc main.c network/net_capture.c network/net_proto.c network/net_proto_tcp.c network/net_proto_udp.c db.c log.c \
+        -Inetwork \
+        $(pkg-config --cflags --libs gtk+-3.0) -lpcap -lsqlite3 -o siem \
+        && sudo setcap cap_net_raw,cap_net_admin=eip siem \
+        && ./siem
         ;;
     cmake)
-	    mkdir -p build && cd build && cmake .. && make && cd .. && ./build/siem
+        mkdir -p build && cd build && cmake .. && make -j"$(nproc)" && cd .. \
+        && sudo setcap cap_net_raw,cap_net_admin=eip build/siem \
+        && ./build/siem
     	;;
     make)
         make run
         ;;
     clean)
-        rm -rf siem.db siem build
+        rm -rf siem.db siem build log.o main.o db.o
         ;;
     *)
         echo "Usage: run {docker|gcc|cmake|make|clean}"

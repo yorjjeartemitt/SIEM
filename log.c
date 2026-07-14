@@ -205,10 +205,14 @@ int parse_generic_log(const char *filepath,LogBuffer *buf){
                 while (*(rb+1)==' ') rb++;
                 strncpy(entry.message,rb+1,sizeof(entry.message)-1);
             }else{
-                strncpy(entry.message,line,sizeof(entry.message)-1);
+                size_t mlen=strnlen(line,sizeof(entry.message)-1);
+                memcpy(entry.message,line,mlen);
+                entry.message[mlen]=0;
             }
         }else{
-            strncpy(entry.message,line,sizeof(entry.message)-1);
+            size_t mlen=strnlen(line,sizeof(entry.message)-1);
+            memcpy(entry.message,line,mlen);
+            entry.message[mlen]=0;
         }
         format_timestamp_sec(entry.timestamp_sec,sizeof(entry.timestamp_sec),entry.timestamp);
         char formatted[32];
@@ -354,7 +358,9 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
         if (ts_len>=(int)sizeof(entry.timestamp)) ts_len=sizeof(entry.timestamp)-1;
         memcpy(entry.timestamp,line,ts_len);
         entry.timestamp[ts_len]=0;
-        strncpy(newest_ts,entry.timestamp,sizeof(newest_ts)-1);
+        size_t tlen=strnlen(entry.timestamp,sizeof(newest_ts)-1);
+        memcpy(newest_ts,entry.timestamp,tlen);
+        newest_ts[tlen]=0;
 
         char *p=space1+1;
         char *space2=strchr(p,' ');
