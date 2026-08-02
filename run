@@ -24,11 +24,11 @@ case "$1" in
     make)
         make run
         ;;
-    clean)
-        rm -rf siem.db siem build log.o main.o db.o network/net_capture.o network/net_proto.o network/net_proto_tcp.o network/net_proto_udp.o
+    clear)
+        rm -rf siem.db siem build log.o main.o db.o
         ;;
     *)
-        echo "Usage: run {docker|gcc|cmake|make|clean}"
+        echo "Usage: run {docker|gcc|cmake|make|clear}"
         exit 1
         ;;
 esac

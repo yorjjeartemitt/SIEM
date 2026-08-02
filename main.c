@@ -34,6 +34,7 @@ typedef struct{
 	GtkTreeViewColumn *net_cols[5];
 	NetCapture *net_cap;
 } AppWidgets;
+
 static void set_dark(GtkMenuItem *item,gpointer data){
 	(void)item;
 	AppWidgets *aw=(AppWidgets*)data;
@@ -103,61 +104,37 @@ static void reset_buffer(AppWidgets *aw){
 }
 
 static void reload_tree_from_buffer(AppWidgets *aw,LogBuffer *buf){
-	GtkAdjustment *vadj=gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(gtk_widget_get_parent(aw->tree)));
-	gdouble saved_pos=gtk_adjustment_get_value(vadj);
-
-	GtkTreeModel *model=gtk_tree_view_get_model(GTK_TREE_VIEW(aw->tree));
-	g_object_ref(model);
-	append_page_to_tree(aw,buf);
-	gtk_tree_view_set_model(GTK_TREE_VIEW(aw->tree),model);
-	g_object_unref(model);
-
-	gtk_adjustment_set_value(vadj,saved_pos);
+    append_page_to_tree(aw, buf);
 }
-static void on_toggle_show_all(GtkToggleButton *btn,gpointer data){
-	AppWidgets *aw=(AppWidgets*)data;
-	gtk_tree_store_clear(aw->store);
-
-	aw->show_all=gtk_toggle_button_get_active(btn);
-	reload_tree_from_buffer(aw,&aw->current_buf);
-}
-static void load_source(AppWidgets *aw, SourceType src){
+static void on_toggle_show_all(GtkToggleButton *btn, gpointer data){
+    AppWidgets *aw=(AppWidgets*)data;
+    gtk_tree_store_clear(aw->store);
+    aw->page_offset=0;
+    aw->show_all=gtk_toggle_button_get_active(btn);
+    reload_tree_from_buffer(aw, &aw->current_buf);
+}static void load_source(AppWidgets *aw, SourceType src){
 	reset_buffer(aw);
-	int before=aw->current_buf.count;
     switch(src){
         case SRC_PACMAN:
-            aw->pacman_log_offset = 0;
+            aw->pacman_log_offset=0;
             break;
         case SRC_AUTH:
-            aw->auth_log_offset = 0;
+            aw->auth_log_offset=0;
             break;
         case SRC_SYSTEM:
-            aw->last_jounal_ts[0] = 0;
+            aw->last_jounal_ts[0]=0;
+            aw->last_jounal_line[0]=0;
             break;
         case SRC_ALL:
-            aw->pacman_log_offset = 0;
-            aw->auth_log_offset = 0;
-            aw->last_jounal_ts[0] = 0;
+            aw->pacman_log_offset=0;
+            aw->auth_log_offset=0;
+            aw->last_jounal_ts[0]=0;
+            aw->last_jounal_line[0]=0;
             break;
 		default: break;
     }
-	switch(src){
-		case SRC_PACMAN:
-			aw->pacman_log_offset=0;
-			break;
-		case SRC_AUTH:
-			aw->auth_log_offset=0;
-			break;
-		case SRC_SYSTEM:
-			aw->last_jounal_ts[0]=0;
-			break;
-		case SRC_ALL:
-			aw->pacman_log_offset=0;
-			aw->auth_log_offset=0;
-			aw->last_jounal_ts[0]=0;
-			break;
-		default: break;
-	}
+    int before=aw->current_buf.count;
+
 	switch(src){
 		case SRC_PACMAN:
 			parse_pacman_log_incremental("/var/log/pacman.log",&aw->current_buf,&aw->pacman_log_offset);
@@ -175,7 +152,6 @@ static void load_source(AppWidgets *aw, SourceType src){
 			break;
 		default: break;
 	}
-	aw->active_source=src;
 	for (int i=before;i<aw->current_buf.count;i++){	
 		LogEntry *e=&aw->current_buf.data[i];
 		if (e->is_alert) db_insert_log(aw->db,e);
@@ -195,10 +171,23 @@ static void new_session(GtkMenuItem *item,gpointer data){
 	aw->last_jounal_ts[0]=0;
 	aw->active_source=SRC_NONE;
 }
-static void on_source_pacman(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_PACMAN); }
-static void on_source_auth(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_AUTH); }
-static void on_source_journal(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_SYSTEM); }
-static void on_source_all(GtkButton *btn,gpointer data){ (void)btn; load_source((AppWidgets*)data,SRC_ALL); }
+static void on_source_pacman(GtkButton *btn,gpointer data){
+	(void)btn; 
+	load_source((AppWidgets*)data,SRC_PACMAN);
+}
+static void on_source_auth(GtkButton *btn,gpointer data){
+	(void)btn;
+	load_source((AppWidgets*)data,SRC_AUTH);
+}
+static void on_source_journal(GtkButton *btn,gpointer data){
+	(void)btn; 
+	load_source((AppWidgets*)data,SRC_SYSTEM);
+}
+
+static void on_source_all(GtkButton *btn,gpointer data){
+	(void)btn; 
+	load_source((AppWidgets*)data,SRC_ALL);
+}
 
 static void on_window_destroy(GtkWidget *widget,gpointer data){
 	(void)widget;
@@ -253,11 +242,13 @@ static void on_net_packet(const NetPacket *pkt,void *user_data){
 }
 static gboolean capture_tick(gpointer data){
     AppWidgets *aw=(AppWidgets*)data;
+	if (aw->net_cap){
+		net_capture_poll(aw->net_cap,200,on_net_packet,aw);
+	}
+
     if (aw->active_source==SRC_NONE) return G_SOURCE_CONTINUE;
-    if (aw->net_cap){
-    	net_capture_poll(aw->net_cap,200,on_net_packet,aw);
-    }
-    int before=aw->current_buf.count;
+    if (aw->active_source==SRC_NONE) return G_SOURCE_CONTINUE;
+	int before=aw->current_buf.count;
 
     switch(aw->active_source){
         case SRC_PACMAN:
@@ -336,6 +327,7 @@ static void start_capture(GtkToolButton *btn,gpointer data){
 	aw->net_cap=net_capture_open_live(NULL,1,0,"",errbuf);
 	if (!aw->net_cap){
 		g_print("net_capture_open_live failed: %s\n",errbuf);
+		return;
 	}
 	aw->is_capturing=TRUE;
 	aw->capture_timer_id=g_timeout_add(2000,capture_tick,aw);
@@ -355,7 +347,6 @@ static void stop_capture(GtkToolButton *btn,gpointer data){
 	gtk_label_set_text(GTK_LABEL(aw->status_label)," ○ stopped ");
 	db_set_state(aw->db,"is_capturing","0");
 }
-static void clear_view(GtkToolButton *btn,gpointer data){ (void)btn; reset_buffer((AppWidgets*)data); }
 
 static GtkWidget* build_network_view(AppWidgets *aw){
 	GtkWidget *scroll=gtk_scrolled_window_new(NULL,NULL);
@@ -377,6 +368,16 @@ static GtkWidget* build_network_view(AppWidgets *aw){
 	gtk_tree_view_column_set_expand(aw->net_cols[4],TRUE);
 	gtk_container_add(GTK_CONTAINER(scroll),tree);
 	return scroll;
+}
+static void clear_view(GtkToolButton *btn,gpointer data){
+	(void)btn;
+	AppWidgets *aw=(AppWidgets*)data;
+	const char *visible=gtk_stack_get_visible_child_name(GTK_STACK(aw->stack));
+	if (visible && !strcmp(visible,"network")){
+		gtk_list_store_clear(aw->net_store);
+	} else {
+		reset_buffer(aw);
+	}
 }
 static void switch_to_network(GtkMenuItem *item,gpointer data){
 	(void)item;
@@ -551,6 +552,9 @@ static GtkWidget* left_panel_analyst(AppWidgets *aw){
 }
 static void activate(GtkApplication *app, gpointer data){
 	(void)data;
+	if (parser_conf_rules("rules.conf")!=0){
+		g_print("Warning: cannot download rules.conf");
+	}
 	GtkCssProvider *provider=gtk_css_provider_new();
 	gtk_css_provider_load_from_data(provider,"menubar{padding:0px;min-height:0px;}" "menubar menuitem{padding:2px 6px}",-1,NULL);
 	gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),GTK_STYLE_PROVIDER(provider),GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -688,7 +692,7 @@ static void activate(GtkApplication *app, gpointer data){
 }
 
 int main(int argc,char *argv[]){
-	GtkApplication *app=gtk_application_new("org.siem.app",G_APPLICATION_FLAGS_NONE);
+	GtkApplication *app=gtk_application_new("org.siem.app",G_APPLICATION_DEFAULT_FLAGS);
 	g_signal_connect(app,"activate",G_CALLBACK(activate),NULL);
 	int status=g_application_run(G_APPLICATION(app),argc,argv);
 	g_object_unref(app);

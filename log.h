@@ -31,6 +31,7 @@ int parse_jornalctl_live(LogBuffer *buf,int max_lines);
 int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts_size,char *last_line,size_t line_size);
 int parse_auth_log_incremental(const char *filepath,LogBuffer *buf,long *offset);
 int parse_pacman_log_incremental(const char *filepath,LogBuffer *buf,long *offset);
+int parser_conf_rules(const char *filepath);
 void check_alert(LogEntry *entry);
 
 #endif

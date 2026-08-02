@@ -31,6 +31,9 @@ typedef struct {
     const char *severity;
     const char *category;
 } AlertRule;
+AlertRule *rules=NULL;
+size_t count=0;
+size_t capacity=0;
 static void format_timestamp(char *out,size_t out_size,const char *raw){
     int year,mon,day,hours,min,sec;
     if (sscanf(raw,"%d-%d-%dT%d:%d:%d",&year,&mon,&day,&hours,&min,&sec)==6){
@@ -63,56 +66,41 @@ static void format_timestamp_sec(char *out,size_t out_size,const char *raw){
     }
     snprintf(out,out_size,"%s",raw);
 }
-static const AlertRule rules[]={
-    // CRITICAL
-    {"segfault","CRITICAL","system"},
-    {"kernel panic","CRITICAL","system"},
-    {"out of memory","CRITICAL","system"},
-    {"buffer overflow","CRITICAL","malware"},
-    {"root access","CRITICAL","auth"},
-    {"privilege escalation","CRITICAL","auth"},
-
-    // HIGH - auth / security
-    {"authentication failure","HIGH","auth"},
-    {"failed password","HIGH","auth"},
-    {"invalid user","HIGH","auth"},
-    {"unauthorized","HIGH","auth"},
-    {"permission denied","HIGH","auth"},
-    {"access denied","HIGH","auth"},
-    {"denied","HIGH","auth"},
-    {"refused","HIGH","network"},
-    {"connection reset","HIGH","network"},
-    {"port scan","HIGH","recon"},
-    {"brute force","HIGH","auth"},
-    {"sql injection","HIGH","malware"},
-    {"malware","HIGH","malware"},
-    {"exploit","HIGH","malware"},
-    {"backdoor","HIGH","malware"},
-    {"checksum mismatch","HIGH","integrity"},
-    {"signature invalid","HIGH","integrity"},
-    {"file modified","HIGH","integrity"},
-
-    // MEDIUM - generic errors
-    {"error","MEDIUM","system"},
-    {"failed","MEDIUM","system"},
-    {"failure","MEDIUM","system"},
-    {"timeout","MEDIUM","network"},
-    {"disconnected","MEDIUM","network"},
-    {"unreachable","MEDIUM","network"},
-    {"exception","MEDIUM","system"},
-    {"crash","MEDIUM","system"},
-    {"corrupt","MEDIUM","integrity"},
-    {"suspicious","MEDIUM","recon"},
-
-    // LOW - worth noting
-    {"warning","LOW","system"},
-    {"retry","LOW","network"},
-    {"deprecated","LOW","system"},
-    {"slow response","LOW","network"},
-    {"high latency","LOW","network"},
-
-    {NULL,NULL,NULL}
-};
+int parser_conf_rules(const char *filepath){
+    FILE *f=fopen(filepath,"r");
+    if (!f) return -1;
+    char line[256];
+    while (fgets(line,sizeof(line),f)){
+        if (line[0]=='#' || line[0]=='\n') continue;
+        line[strcspn(line,"\n")]=0;
+        char *pattern=strtok(line,",");
+        char *severity=strtok(NULL,",");
+        char *category=strtok(NULL,",");
+        if (!pattern || !severity || !category) continue;
+        if (count==capacity){
+            capacity=capacity==0 ? 16: capacity*2;
+            rules=realloc(rules,capacity*sizeof(AlertRule));
+            if (!rules){
+                fclose(f);
+                return -1;
+            }
+        }
+        rules[count].pattern=strdup(pattern);
+        rules[count].severity=strdup(severity);
+        rules[count].category=strdup(category);
+        count++;
+    }
+    fclose(f);
+    if (count==capacity){
+        capacity++;
+        rules=realloc(rules,capacity*sizeof(AlertRule));
+        if (!rules) return -1;
+    }
+    rules[count].pattern=NULL;
+    rules[count].severity=NULL;
+    rules[count].category=NULL;
+    return 0;
+}
 
 static int severity_rank(const char *sev){
     if (!strcmp(sev,"CRITICAL")) return 4;
@@ -345,6 +333,15 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
     int skipping=(last_line[0]!=0);
     while (fgets(line,sizeof(line),pipe)){
         if (skipping){
+            char stripped[512];
+            strncpy(stripped,line,sizeof(stripped)-1);
+            stripped[sizeof(stripped)-1]=0;
+            stripped[strcspn(stripped,"\n")]=0;
+            char last_stripped[512];
+            strncpy(last_stripped,last_line,sizeof(last_stripped)-1);
+            last_stripped[sizeof(last_stripped)-1]=0;
+            last_stripped[strcspn(last_stripped,"\n")]=0;
+
             if (strcmp(line,last_line)==0){
                 skipping=0;
             }
@@ -380,11 +377,16 @@ int parse_journalctl_incremental(LogBuffer *buf, char *last_timestamp, size_t ts
         read_count++;
         strncpy(last_line,line,line_size-1);
         last_line[line_size-1]=0;
+        last_line[strcspn(last_line,"\n")]=0;
     }
     if (newest_ts[0]) snprintf(last_timestamp,ts_size,"%s",newest_ts);
     pclose(pipe);
     return read_count;
 }
+
+
+
+
 int parse_auth_log_incremental(const char *filepath,LogBuffer *buf,long *offset){
     FILE *f=fopen(filepath,"r");
     if (!f) return -1;
@@ -422,6 +424,9 @@ int parse_pacman_log_incremental(const char *filepath,LogBuffer *buf,long *offse
     if (!f) return -1;
     fseek(f,0,SEEK_END);
     long file_size=ftell(f);
+    if (file_size<*offset){
+        *offset=0;
+    }
     if (*offset==0 && file_size>65536){
         long start=file_size-65536;
         fseek(f,start,SEEK_SET);
